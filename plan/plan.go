@@ -17,6 +17,7 @@ limitations under the License.
 package plan
 
 import (
+	log "github.com/Sirupsen/logrus"
 	"github.com/kubernetes-incubator/external-dns/endpoint"
 )
 
@@ -66,10 +67,15 @@ func (p *Plan) Calculate() *Plan {
 
 		// If there already is a record update it if it changed.
 		if desired.Target != current.Target {
-			desired.MergeLabels(current.Labels) //inherit the labels from the dns provider, including Owner ID
 			changes.UpdateOld = append(changes.UpdateOld, current)
+
+			desired.RecordType = current.RecordType // inherit the type from the dns provider
+			desired.MergeLabels(current.Labels)     // inherit the labels from the dns provider, including Owner ID
 			changes.UpdateNew = append(changes.UpdateNew, desired)
+			continue
 		}
+
+		log.Debugf("Skipping endpoint %v because target has not changed", desired)
 	}
 
 	// Ensure all undesired records are removed. Each current record that cannot

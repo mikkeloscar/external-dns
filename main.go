@@ -17,14 +17,15 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/linki/instrumented_http"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"k8s.io/client-go/kubernetes"
@@ -39,19 +40,12 @@ import (
 	"github.com/kubernetes-incubator/external-dns/source"
 )
 
-var (
-	version = "unknown"
-)
-
 func main() {
 	cfg := externaldns.NewConfig()
-	if err := cfg.ParseFlags(os.Args); err != nil {
+	if err := cfg.ParseFlags(os.Args[1:]); err != nil {
 		log.Fatalf("flag parsing error: %v", err)
 	}
-	if cfg.Version {
-		fmt.Println(version)
-		os.Exit(0)
-	}
+	log.Infof("config: %+v", cfg)
 
 	if err := validation.ValidateConfig(cfg); err != nil {
 		log.Fatalf("config validation failed: %v", err)
@@ -77,17 +71,31 @@ func main() {
 		log.Fatal(err)
 	}
 
-	source.Register("service", source.NewServiceSource(client, cfg.Namespace, cfg.Compatibility))
-	source.Register("ingress", source.NewIngressSource(client, cfg.Namespace))
+	serviceSource, err := source.NewServiceSource(client, cfg.Namespace, cfg.FqdnTemplate, cfg.Compatibility)
+	if err != nil {
+		log.Fatal(err)
+	}
+	source.Register("service", serviceSource)
 
-	sources := source.NewMultiSource(source.LookupMultiple(cfg.Sources...)...)
+	ingressSource, err := source.NewIngressSource(client, cfg.Namespace, cfg.FqdnTemplate)
+	if err != nil {
+		log.Fatal(err)
+	}
+	source.Register("ingress", ingressSource)
+
+	sources, err := source.LookupMultiple(cfg.Sources)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	endpointsSource := source.NewDedupSource(source.NewMultiSource(sources))
 
 	var p provider.Provider
 	switch cfg.Provider {
 	case "google":
-		p, err = provider.NewGoogleProvider(cfg.GoogleProject, cfg.DryRun)
+		p, err = provider.NewGoogleProvider(cfg.GoogleProject, cfg.DomainFilter, cfg.DryRun)
 	case "aws":
-		p, err = provider.NewAWSProvider(cfg.DryRun)
+		p, err = provider.NewAWSProvider(cfg.DomainFilter, cfg.DryRun)
 	default:
 		log.Fatalf("unknown dns provider: %s", cfg.Provider)
 	}
@@ -100,7 +108,7 @@ func main() {
 	case "noop":
 		r, err = registry.NewNoopRegistry(p)
 	case "txt":
-		r, err = registry.NewTXTRegistry(p, cfg.TXTPrefix, cfg.RecordOwnerID)
+		r, err = registry.NewTXTRegistry(p, cfg.TXTPrefix, cfg.TXTOwnerID)
 	default:
 		log.Fatalf("unknown registry: %s", cfg.Registry)
 	}
@@ -115,8 +123,7 @@ func main() {
 	}
 
 	ctrl := controller.Controller{
-		Zone:     cfg.Zone,
-		Source:   sources,
+		Source:   endpointsSource,
 		Registry: r,
 		Policy:   policy,
 		Interval: cfg.Interval,
@@ -133,7 +140,7 @@ func main() {
 
 	ctrl.Run(stopChan)
 	for {
-		log.Infoln("pod waiting to be deleted")
+		log.Info("Pod waiting to be deleted")
 		time.Sleep(time.Second * 30)
 	}
 }
@@ -142,26 +149,37 @@ func handleSigterm(stopChan chan struct{}) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM)
 	<-signals
-	log.Infoln("received SIGTERM. Terminating...")
+	log.Info("Received SIGTERM. Terminating...")
 	close(stopChan)
 }
 
 func newClient(cfg *externaldns.Config) (*kubernetes.Clientset, error) {
-	if !cfg.InCluster && cfg.KubeConfig == "" {
-		cfg.KubeConfig = clientcmd.RecommendedHomeFile
+	if cfg.KubeConfig == "" {
+		if _, err := os.Stat(clientcmd.RecommendedHomeFile); err == nil {
+			cfg.KubeConfig = clientcmd.RecommendedHomeFile
+		}
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", cfg.KubeConfig)
+	config, err := clientcmd.BuildConfigFromFlags(cfg.Master, cfg.KubeConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Infof("targeting cluster at %s", config.Host)
+	config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		return instrumented_http.NewTransport(rt, &instrumented_http.Callbacks{
+			PathProcessor: func(path string) string {
+				parts := strings.Split(path, "/")
+				return parts[len(parts)-1]
+			},
+		})
+	}
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
 	}
+
+	log.Infof("Connected to cluster at %s", config.Host)
 
 	return client, nil
 }
