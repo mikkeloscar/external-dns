@@ -1,5 +1,5 @@
-hash: 9acd732aa42d366638309eb85248ff41cdef27870c09a060502d9fec5ed84e8f
-updated: 2017-05-15T11:29:00.450041553+02:00
+hash: 8d7675a891f0a61aeddc64ca1090ccb6df0b3101f508acb4c5293ede9e4bcf1e
+updated: 2017-05-21T12:04:13.998248877+02:00
 imports:
 - name: bitbucket.org/ww/goautoneg
   version: 75cd24fc2f2c2a2088577d12123ddee5f54e0675
@@ -47,6 +47,8 @@ imports:
   version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
   subpackages:
   - quantile
+- name: github.com/cloudflare/cloudflare-go
+  version: 9d186a5948cb4bb3d1f3343bc6bcae91e7aa6479
 - name: github.com/davecgh/go-spew
   version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
   subpackages:
@@ -108,6 +110,8 @@ imports:
   version: fc2b8d3a73c4867e51861bbdd5ae3c1f0869dd6a
   subpackages:
   - pbutil
+- name: github.com/pkg/errors
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/prometheus/client_golang
   version: c5b7fccd204277076155f10851dad72b76a49317
   subpackages:

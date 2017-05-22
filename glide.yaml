@@ -37,3 +37,5 @@ import:
 - package: github.com/kubernetes/repo-infra
 - package: github.com/linki/instrumented_http
   version: ~0.1.0
+- package: github.com/cloudflare/cloudflare-go
+  version: ~0.7.3
